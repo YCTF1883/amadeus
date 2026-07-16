@@ -25,6 +25,13 @@ class Config:
     MAX_HISTORY_LENGTH: int = 20  # 最多保留多少轮对话历史
     AGENT_TEMPERATURE: float = 0.7  # 回复的创造性程度
 
+    # --- 邮件 ---
+    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.qq.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+
+
     @classmethod
     def validate(cls) -> bool:
         """检查必要配置是否齐全"""
@@ -32,6 +39,9 @@ class Config:
             print("⚠️  警告：未设置 DEEPSEEK_API_KEY，请在 .env 文件中配置")
             return False
         return True
+
+
+
 
 
 config = Config()

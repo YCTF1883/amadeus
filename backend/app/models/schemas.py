@@ -15,6 +15,9 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """POST /api/chat 请求体"""
     message: str = Field(..., description="用户输入的消息", min_length=1)
+    thread_id: Optional[str] = Field(
+        default=None, description="会话ID，不传则开新会话。同一ID共享对话上下文"
+    )
     history: Optional[list[ChatMessage]] = Field(
         default=[], description="之前的对话历史（可选）"
     )
@@ -23,6 +26,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """聊天回复"""
     reply: str = Field(..., description="Amadeus 的回复")
+    thread_id: str = Field(..., description="当前会话ID，下次请求时带回可继续对话")
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

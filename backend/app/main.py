@@ -82,11 +82,11 @@ async def chat(request: ChatRequest):
     """
     try:
         agent = get_agent()
-        reply = await agent.chat(
+        reply, thread_id = await agent.chat(
             message=request.message,
-            history=request.history,
+            thread_id=request.thread_id,
         )
-        return ChatResponse(reply=reply)
+        return ChatResponse(reply=reply, thread_id=thread_id)
 
     except ValueError as e:
         # 配置错误（如 API Key 未设置）
