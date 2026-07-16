@@ -12,6 +12,9 @@ load_dotenv()
 class Config:
     """全局配置单例"""
 
+    # --- 安全词 ---
+    DELETE_SAFETY_WORD: str = os.getenv("DELETE_SAFETY_WORD", "一切都是命运石之门的选择")
+
     # --- DeepSeek API ---
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -39,6 +42,7 @@ class Config:
             print("⚠️  警告：未设置 DEEPSEEK_API_KEY，请在 .env 文件中配置")
             return False
         return True
+
 
 
 

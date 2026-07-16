@@ -32,3 +32,9 @@ edge-tts>=6.1.0
 # 动捕
 mediapipe>=0.10.0
 opencv-python>=4.9.0
+
+# Phase 2 RAG
+langchain-huggingface>=0.1.0
+langchain-chroma>=0.2.0
+langchain-community>=0.3.0
+langchain-text-splitters>=1.1.0

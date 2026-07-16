@@ -11,7 +11,15 @@ import smtplib
 from ..config import config
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from backend.app.rag.knowledge_base import KnowledgeBase
 
+_kb_instance = None
+
+def _get_kb():
+    global _kb_instance
+    if _kb_instance is None:
+        _kb_instance = KnowledgeBase()
+    return _kb_instance
 
 
 @tool
@@ -88,10 +96,58 @@ def send_email(to: str = "", subject: str = "", body: str = "") -> str:
     except Exception as e:
         return f"邮件发送失败：{str(e)}。请检查邮箱地址和SMTP设置是否正确。"
 
+
+@tool
+def search_knowledge_base(query: str) -> str:
+    """在 Amadeus 的知识库中搜索信息。当用户问"你知道吗"、"查一下资料"、"有没有关于XX的信息"、"根据知识库"时调用。
+
+    参数:
+        query: 搜索查询，用自然语言描述你想找什么
+    """
+    kb = _get_kb()
+    results = kb.search(query)
+    if not results or results == "知识库中没有找到相关文档。":
+        return "知识库中没有找到相关信息。哼，你是不是还没往里面放资料？"
+    return f"从知识库中找到以下信息：\n{results}"
+
+
+@tool
+def add_to_knowledge_base(text: str, source: str = "对话记录") -> str:
+    """把信息存入知识库。当用户说"记住这个"、"存一下"、"以后记住"时调用。
+
+    参数:
+        text: 要存储的信息
+        source: 来源标签（可选）
+    """
+    kb = _get_kb()
+    return kb.add_document(text, source)
+
+
+@tool
+def delete_from_knowledge_base(query: str, safety_word: str = "") -> str:
+    """从知识库中删除信息。当用户说"忘记XX"、"删除关于XX的记录"时调用。
+
+    安全词是"一切都是命运石之门的选择"。如果用户在消息中提到了这句话，
+    就把它作为 safety_word 参数传入。如果用户没说安全词，safety_word 留空，
+    系统会提示用户输入安全词。
+
+    参数:
+        query: 描述要删除的内容
+        safety_word: 如果用户说了"一切都是命运石之门的选择"就传入此句，否则留空
+    """
+    if safety_word != config.DELETE_SAFETY_WORD:
+        return f"⚠️ 删除知识库需要安全词确认。请说出安全词：「{config.DELETE_SAFETY_WORD}」"
+
+    kb = _get_kb()
+    return kb.delete_by_query(query)
+
 # Phase 1 可用的工具列表（后续会扩展邮件等更多工具）
 AVAILABLE_TOOLS = [
     get_current_time,
     calculate,
     create_reminder,
     send_email,
+    search_knowledge_base,
+    add_to_knowledge_base,
+    delete_from_knowledge_base,
 ]
