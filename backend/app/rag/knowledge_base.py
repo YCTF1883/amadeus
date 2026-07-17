@@ -49,14 +49,20 @@ class KnowledgeBase:
 
     def search(self, query: str, k: int = 3) -> str:
 
-        # 1. vectorstore.similarity_search(query, k=k)
-        # 2. 结果拼成一段文字返回
-        docs = self.vectorstore.similarity_search(query, k=k)
+        # 1. 先搜用户画像（user_profile），再搜全部
+        # 2. 用户画像结果优先展示
+        docs = self.vectorstore.similarity_search(query, k=k + 5)  # 多搜一些再筛选
         if not docs:
             return "知识库中没有找到相关文档。"
 
+        # 用户画像优先
+        profile_docs = [d for d in docs if d.metadata.get("source") == "user_profile"]
+        other_docs = [d for d in docs if d.metadata.get("source") != "user_profile"]
+
         results = []
-        for doc in docs:
+        for doc in profile_docs[:2]:
+            results.append(f"关于你：{doc.page_content}")
+        for doc in other_docs[:k]:
             src = doc.metadata.get("source", "未知来源")
             results.append(f"来源：{src}：{doc.page_content}")
         return "\n\n".join(results)
