@@ -9,6 +9,7 @@ Amadeus Agent 核心 —— LangGraph + DeepSeek
 
 这个循环由 LangGraph 的 create_react_agent 自动管理
 """
+import json
 from typing import Optional, AsyncIterator, Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -114,12 +115,16 @@ class AmadeusAgent:
             thread_id: 会话ID，不传则开新会话
 
         Yields:
-            逐个 token（词/字）
+            首个 token 是 JSON 元信息 {"type":"meta","thread_id":"..."}
+            后续是逐个文本 token（词/字）
         """
         await self._ensure_initialized()
 
         tid = thread_id or await self._get_thread_id()
         config_ = {"configurable": {"thread_id": tid}}
+
+        # 第一个事件：元信息（thread_id），方便前端建立会话
+        yield json.dumps({"type": "meta", "thread_id": tid})
 
         async for event in self.graph.astream_events(
             {"messages": [HumanMessage(content=message)]},

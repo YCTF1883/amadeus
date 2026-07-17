@@ -12,6 +12,7 @@ from ..config import config
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from backend.app.rag.knowledge_base import KnowledgeBase
+from ddgs import DDGS
 
 _kb_instance = None
 
@@ -95,6 +96,10 @@ def send_email(to: str = "", subject: str = "", body: str = "") -> str:
         server.sendmail(config.SMTP_USER, to, message.as_string())  # 发送邮件
         server.quit()  # 退出登录
 
+        # 自动存入知识库，方便后续查询
+        record = f"[邮件记录] 收件人：{to}，主题：{subject}，正文：{body}"
+        _get_kb().add_document(record, source="邮件发送记录")
+
         return f"✅ 已发送邮件给 {to}。主题：{subject}。哼，这种小事下次自己做不就好了？"
     except Exception as e:
         return f"邮件发送失败：{str(e)}。请检查邮箱地址和SMTP设置是否正确。"
@@ -144,6 +149,26 @@ def delete_from_knowledge_base(query: str, safety_word: str = "") -> str:
     kb = _get_kb()
     return kb.delete_by_query(query)
 
+@tool
+def search_web(query: str) -> str:
+    """在网上搜索最新信息。当用户问"查一下"、"搜索XX"、"百度一下XX"、"最近发生了什么"、
+    "网上有没有XX"、"帮我找一下"等需要联网获取信息时调用。
+
+    参数:
+        query: 搜索关键词，用简洁的关键词组合（不要用完整句子）
+    """
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=5))
+        if not results:
+            return "没找到相关信息。哼，你是不是问了一个不存在的问题？"
+        lines = []
+        for i, r in enumerate(results, 1):
+            lines.append(f"{i}. {r['title']}\n   {r['body']}\n   {r['href']}")
+        return "\n\n".join(lines)
+    except Exception as e:
+        return f"搜索失败：{str(e)}。哼，大概是网络问题，别赖我。"
+
 # Phase 1 可用的工具列表（后续会扩展邮件等更多工具）
 AVAILABLE_TOOLS = [
     get_current_time,
@@ -153,4 +178,5 @@ AVAILABLE_TOOLS = [
     search_knowledge_base,
     add_to_knowledge_base,
     delete_from_knowledge_base,
+    search_web,
 ]

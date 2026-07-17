@@ -10,13 +10,16 @@ API 文档（启动后访问）:
     http://localhost:8000/redoc （ReDoc）
 """
 import traceback
-from fastapi import FastAPI, HTTPException
+import asyncio
+from openai import AsyncOpenAI
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from backend.app.models.schemas import ChatRequest, ChatResponse, HealthResponse
 from backend.app.agent.graph import get_agent
-
+from backend.app.speech.tts import synthesize
+from backend.app.config import config
 # ============================================
 # 创建 FastAPI 应用
 # ============================================
@@ -41,7 +44,7 @@ app.add_middleware(
 # ============================================
 @app.on_event("startup")
 async def startup():
-    """服务启动时初始化 Agent"""
+    """服务启动时初始化 Agent + 预加载 TTS 模型"""
     try:
         get_agent()
         print("✅ Amadeus Agent 初始化完成")
@@ -50,6 +53,21 @@ async def startup():
     except Exception as e:
         print(f"⚠️  Agent 初始化失败: {e}")
         print("   请检查 .env 文件中的 DEEPSEEK_API_KEY 配置")
+
+    # 后台预加载 TTS 模型（避免第一次请求等 30 秒）
+    try:
+        import threading
+        from backend.app.speech.tts import _get_worker
+
+        def preload_tts():
+            print("⏳ 预加载 TTS 模型...")
+            _get_worker()
+            print("✅ TTS 模型已就绪")
+
+        thread = threading.Thread(target=preload_tts, daemon=True)
+        thread.start()
+    except Exception as e:
+        print(f"⚠️  TTS 预加载失败: {e}")
 
 
 # ============================================
@@ -108,7 +126,10 @@ async def chat_stream(request: ChatRequest):
         agent = get_agent()
 
         async def event_generator():
-            async for token in agent.chat_stream(request.message):
+            async for token in agent.chat_stream(
+                request.message,
+                thread_id=request.thread_id,
+            ):
                 # SSE 格式：data: <内容>\n\n
                 yield f"data: {token}\n\n"
             yield "data: [DONE]\n\n"
@@ -129,6 +150,81 @@ async def chat_stream(request: ChatRequest):
 
 
 # ============================================
+# 中→日翻译（用 DeepSeek 快速翻译）
+# ============================================
+_translate_client = None
+
+
+def _get_translate_client():
+    global _translate_client
+    if _translate_client is None:
+        _translate_client = AsyncOpenAI(
+            api_key=config.DEEPSEEK_API_KEY,
+            base_url=config.DEEPSEEK_BASE_URL,
+        )
+    return _translate_client
+
+
+async def _to_japanese(text: str) -> str:
+    """把中文文本翻译成日文（牧濑红莉栖语气）"""
+    client = _get_translate_client()
+    resp = await client.chat.completions.create(
+        model=config.DEEPSEEK_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是一个日文翻译助手。把用户输入的中文翻译成日文，"
+                    "保持牧濑红莉栖（Makise Kurisu）的语气：自信、略带傲娇、偶尔用科学术语。"
+                    "只输出日文译文，不要加任何解释或前缀。"
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        temperature=0.3,
+        max_tokens=512,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+# ============================================
+# WebSocket — 语音通道
+# ============================================
+@app.websocket("/ws/voice")
+async def voice_websocket(websocket: WebSocket):
+    await websocket.accept()
+    print("🔊 语音 WebSocket 已连接")
+
+    try:
+        while True:
+            text = await websocket.receive_text()
+
+            if not text.strip():
+                continue
+
+            print(f"  原文: {text[:40]}...")
+
+            # 中→日翻译
+            try:
+                ja_text = await _to_japanese(text)
+                print(f"  日文: {ja_text[:40]}...")
+            except Exception as e:
+                print(f"  翻译失败: {e}")
+                ja_text = text  # 兜底：原文硬传
+
+            # TTS 合成（instruct 控制语速）
+            try:
+                audio_bytes = await synthesize(ja_text, instruct="少しゆっくり話してください")
+                await websocket.send_bytes(audio_bytes)
+                print(f"  ✅ 已发送 {len(audio_bytes)} bytes")
+            except Exception as e:
+                print(f"  TTS 错误: {e}")
+                await websocket.send_text(f"ERROR:{e}")
+
+    except WebSocketDisconnect:
+        print("🔊 语音 WebSocket 已断开")
+
+# ============================================
 # 直接运行入口
 # ============================================
 if __name__ == "__main__":
@@ -141,3 +237,5 @@ if __name__ == "__main__":
         port=config.SERVER_PORT,
         reload=config.DEBUG,
     )
+
+

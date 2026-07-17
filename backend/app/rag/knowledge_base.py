@@ -5,6 +5,10 @@ from langchain_community.document_loaders import PyPDFLoader
 import os
 from pathlib import Path
 
+# HuggingFace 国内镜像（解决 huggingface.co 被墙问题）
+if not os.environ.get("HF_ENDPOINT"):
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
 class KnowledgeBase:
     """Amadeus 的知识库 —— 基于 ChromaDB + 本地 Embedding"""
 
