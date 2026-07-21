@@ -38,17 +38,22 @@ def _get_worker():
 
 async def synthesize(text: str, instruct: str = "") -> bytes:
     """将日语文本合成红莉栖语音，返回 WAV 音频字节"""
+    import time
+    t0 = time.time()
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         out_path = f.name
 
     try:
         worker = _get_worker()
+        print(f"  [TTS] worker 就绪: {time.time() - t0:.2f}s")
 
         task = json.dumps({"text": text, "output": out_path, "instruct": instruct}, ensure_ascii=True)
         worker.stdin.write(task + "\n")
         worker.stdin.flush()
+        print(f"  [TTS] 任务已发送, 文本长度: {len(text)} 字")
 
-        # 跳过警告行，读到 OK 或 ERROR
+        t1 = time.time()
         while True:
             line = worker.stdout.readline()
             if not line:
@@ -57,6 +62,7 @@ async def synthesize(text: str, instruct: str = "") -> bytes:
                 break
             if "ERROR" in line:
                 raise RuntimeError(f"TTS 失败: {line.strip()}")
+        print(f"  [TTS] 合成耗时: {time.time() - t1:.2f}s, 总耗时: {time.time() - t0:.2f}s")
 
         with open(out_path, "rb") as f:
             return f.read()

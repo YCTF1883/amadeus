@@ -192,17 +192,14 @@ class AmadeusAgent:
         last_message = result["messages"][-1]
         return last_message.content, tid
 
-    async def chat_stream(self, message: str, thread_id: Optional[str] = None) -> AsyncIterator[str]:
+    async def chat_stream(self, message: str, thread_id: Optional[str] = None, voice_mode: bool = False) -> AsyncIterator[str]:
         """
         流式聊天 —— 一个字一个字地输出，像真人在打字
 
         Args:
             message: 用户输入
             thread_id: 会话ID，不传则开新会话
-
-        Yields:
-            首个 token 是 JSON 元信息 {"type":"meta","thread_id":"..."}
-            后续是逐个文本 token（词/字）
+            voice_mode: 语音模式——回复更简短（方便 TTS）
         """
         await self._ensure_initialized()
 
@@ -211,6 +208,14 @@ class AmadeusAgent:
 
         # 对话过长时自动摘要
         await self._maybe_summarize(config_)
+
+        # 语音模式：中文回复但简短（1-2句话），方便 TTS
+        if voice_mode:
+            voice_instruction = (
+                "【系统指令：这是语音对话，请用中文回复，控制在1-2句话以内（50字左右），"
+                "简洁自然，保持傲娇性格。】\n\n"
+            )
+            message = voice_instruction + message
 
         # 第一个事件：元信息（thread_id），方便前端建立会话
         yield json.dumps({"type": "meta", "thread_id": tid})

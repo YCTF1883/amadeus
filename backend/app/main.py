@@ -9,6 +9,8 @@ API 文档（启动后访问）:
     http://localhost:8000/docs  （Swagger UI）
     http://localhost:8000/redoc （ReDoc）
 """
+import json
+import base64
 import traceback
 import asyncio
 from openai import AsyncOpenAI
@@ -223,6 +225,72 @@ async def voice_websocket(websocket: WebSocket):
 
     except WebSocketDisconnect:
         print("🔊 语音 WebSocket 已断开")
+
+# ============================================
+# WebSocket — 语音对话（STT + Agent + TTS）
+# ============================================
+@app.websocket("/ws/voice-chat")
+async def voice_chat_websocket(websocket: WebSocket):
+    from backend.app.speech.stt import transcribe
+
+    await websocket.accept()
+    print("🎤 语音对话 WebSocket 已连接")
+
+    try:
+        while True:
+            # 接收前端录制的音频（WAV 二进制）
+            audio_bytes = await websocket.receive_bytes()
+
+            if len(audio_bytes) < 1000:
+                continue  # 太短，跳过
+
+            print(f"  收到音频: {len(audio_bytes)} bytes")
+
+            # 1. STT 识别
+            try:
+                text = await transcribe(audio_bytes)
+                if not text.strip():
+                    await websocket.send_text(json.dumps({"type": "error", "data": "没听清"}))
+                    continue
+            except Exception as e:
+                await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
+                continue
+
+            print(f"  识别结果: {text[:50]}...")
+            await websocket.send_text(json.dumps({"type": "stt", "data": text}))
+
+            # 2. Agent 流式思考（中文短回复，显示在聊天窗）
+            agent = get_agent()
+            full_reply = ""
+            async for token in agent.chat_stream(text, voice_mode=True):
+                full_reply += token
+                if token.strip().startswith('{"type"'):
+                    continue
+                await websocket.send_text(json.dumps({"type": "text", "data": token}))
+
+            # 告知前端文字输出完成
+            await websocket.send_text(json.dumps({"type": "stream_end"}))
+
+            # 3. TTS 后台合成（中文→日语翻译→TTS）
+            async def _gen_audio(reply_text: str):
+                try:
+                    ja_text = await _to_japanese(reply_text)
+                    print(f"  日文: {ja_text[:40]}...")
+                    audio = await synthesize(ja_text, instruct="少しゆっくり話してください")
+                    b64 = base64.b64encode(audio).decode("ascii")
+                    await websocket.send_text(json.dumps({"type": "audio", "data": b64}))
+                    print(f"  ✅ 语音已发送")
+                except Exception as e:
+                    print(f"  TTS 错误: {e}")
+                    await websocket.send_text(json.dumps({"type": "error", "data": f"语音生成失败: {e}"}))
+
+            asyncio.create_task(_gen_audio(full_reply))
+
+    except WebSocketDisconnect:
+        print("🎤 语音对话 WebSocket 已断开")
+
+
+
 
 # ============================================
 # 直接运行入口
