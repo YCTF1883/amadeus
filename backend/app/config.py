@@ -15,10 +15,22 @@ class Config:
     # --- 安全词 ---
     DELETE_SAFETY_WORD: str = os.getenv("DELETE_SAFETY_WORD", "一切都是命运石之门的选择")
 
+    # --- LLM 提供商 ---
+    # 可选: "deepseek" | "qwen"
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "deepseek")
+
     # --- DeepSeek API ---
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
+    # --- Qwen API (阿里百炼) ---
+    QWEN_API_KEY: str = os.getenv("QWEN_API_KEY", "")
+    QWEN_BASE_URL: str = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    QWEN_MODEL: str = os.getenv("QWEN_MODEL", "qwen3.7-plus")
+
+    # --- GPT-SoVITS TTS API ---
+    SOVITS_API_URL: str = os.getenv("SOVITS_API_URL", "http://127.0.0.1:9880")
 
     # --- 服务 ---
     SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8000"))
@@ -38,7 +50,11 @@ class Config:
     @classmethod
     def validate(cls) -> bool:
         """检查必要配置是否齐全"""
-        if not cls.DEEPSEEK_API_KEY or cls.DEEPSEEK_API_KEY == "sk-your-api-key-here":
+        if cls.LLM_PROVIDER == "qwen":
+            if not cls.QWEN_API_KEY:
+                print("⚠️  警告：LLM_PROVIDER=qwen 但未设置 QWEN_API_KEY，请在 .env 文件中配置")
+                return False
+        elif not cls.DEEPSEEK_API_KEY or cls.DEEPSEEK_API_KEY == "sk-your-api-key-here":
             print("⚠️  警告：未设置 DEEPSEEK_API_KEY，请在 .env 文件中配置")
             return False
         return True

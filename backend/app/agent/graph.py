@@ -31,17 +31,33 @@ class AmadeusAgent:
     """Amadeus 智能体 —— 牧濑红莉栖的 AI 分身"""
 
     def __init__(self):
-        """初始化 Agent：连接 DeepSeek，延迟构建 ReAct 图"""
+        """初始化 Agent：连接 LLM，延迟构建 ReAct 图"""
         self._validate_config()
 
-        # 1. 创建 LLM 客户端（DeepSeek 兼容 OpenAI 接口）
+        # 根据配置选择 LLM 提供商
+        provider = config.LLM_PROVIDER
+        extra_body = {}
+        if provider == "qwen":
+            api_key = config.QWEN_API_KEY
+            base_url = config.QWEN_BASE_URL
+            model = config.QWEN_MODEL
+            # 禁用思维链，避免 <thought> 标记泄露
+            extra_body = {"enable_thinking": False}
+        else:
+            api_key = config.DEEPSEEK_API_KEY
+            base_url = config.DEEPSEEK_BASE_URL
+            model = config.DEEPSEEK_MODEL
+
+        # 1. 创建 LLM 客户端（兼容 OpenAI 接口）
         self.llm = ChatOpenAI(
-            model=config.DEEPSEEK_MODEL,
-            api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_BASE_URL,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
             temperature=config.AGENT_TEMPERATURE,
             streaming=True,  # 开启流式输出
+            extra_body=extra_body,
         )
+        print(f"  LLM: {provider} / {model}")
 
         # 2. 记忆和 Graph 延迟初始化（因为 AsyncSqliteSaver 需要异步环境）
         self.memory = None
@@ -72,14 +88,22 @@ class AmadeusAgent:
 
     def _validate_config(self):
         """检查配置是否就绪"""
-        if not config.DEEPSEEK_API_KEY:
-            raise ValueError(
-                "❌ 未配置 DEEPSEEK_API_KEY！\n"
-                "请执行以下步骤：\n"
-                "1. 访问 https://platform.deepseek.com 获取 API Key\n"
-                "2. 将 .env.example 复制为 .env\n"
-                "3. 在 .env 中填入你的 API Key"
-            )
+        provider = config.LLM_PROVIDER
+        if provider == "qwen":
+            if not config.QWEN_API_KEY:
+                raise ValueError(
+                    "❌ 未配置 QWEN_API_KEY！\n"
+                    "请在 .env 中设置 QWEN_API_KEY=sk-xxx"
+                )
+        else:
+            if not config.DEEPSEEK_API_KEY:
+                raise ValueError(
+                    "❌ 未配置 DEEPSEEK_API_KEY！\n"
+                    "请执行以下步骤：\n"
+                    "1. 访问 https://platform.deepseek.com 获取 API Key\n"
+                    "2. 将 .env.example 复制为 .env\n"
+                    "3. 在 .env 中填入你的 API Key"
+                )
 
     async def _maybe_summarize(self, config_: dict):
         """如果对话历史过长，自动总结旧消息并用摘要替换"""
@@ -212,8 +236,10 @@ class AmadeusAgent:
         # 语音模式：中文回复但简短（1-2句话），方便 TTS
         if voice_mode:
             voice_instruction = (
-                "【系统指令：这是语音对话，请用中文回复，控制在1-2句话以内（50字左右），"
-                "简洁自然，保持傲娇性格。】\n\n"
+                "【系统指令：这是语音对话，必须严格遵守以下规则】\n"
+                "1. 用中文回复，控制在1句话以内（30字以内）\n"
+                "2. 简洁自然，保持傲娇性格\n"
+                "3. 禁止输出思维过程、推理步骤、或任何标记\n\n"
             )
             message = voice_instruction + message
 

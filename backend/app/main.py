@@ -13,6 +13,7 @@ import json
 import base64
 import traceback
 import asyncio
+import re
 from openai import AsyncOpenAI
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,30 +47,27 @@ app.add_middleware(
 # ============================================
 @app.on_event("startup")
 async def startup():
-    """服务启动时初始化 Agent + 预加载 TTS 模型"""
+    """服务启动时初始化 Agent"""
     try:
         get_agent()
+        provider = config.LLM_PROVIDER
+        model = config.QWEN_MODEL if provider == "qwen" else config.DEEPSEEK_MODEL
         print("✅ Amadeus Agent 初始化完成")
         print("   角色: 牧濑红莉栖 (Amadeus)")
-        print("   LLM: DeepSeek")
+        print(f"   LLM: {provider} / {model}")
     except Exception as e:
         print(f"⚠️  Agent 初始化失败: {e}")
-        print("   请检查 .env 文件中的 DEEPSEEK_API_KEY 配置")
+        print("   请检查 .env 文件中的 API Key 配置")
 
-    # 后台预加载 TTS 模型（避免第一次请求等 30 秒）
+    # 检查 GPT-SoVITS API 是否可达
     try:
-        import threading
-        from backend.app.speech.tts import _get_worker
-
-        def preload_tts():
-            print("⏳ 预加载 TTS 模型...")
-            _get_worker()
-            print("✅ TTS 模型已就绪")
-
-        thread = threading.Thread(target=preload_tts, daemon=True)
-        thread.start()
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{config.SOVITS_API_URL}/")
+            print(f"✅ GPT-SoVITS TTS API 已就绪 ({resp.status_code})")
     except Exception as e:
-        print(f"⚠️  TTS 预加载失败: {e}")
+        print(f"⚠️  GPT-SoVITS TTS API 未连接 ({e})")
+        print("   请先启动 GPT-SoVITS API 服务")
 
 
 # ============================================
@@ -178,7 +176,27 @@ async def _to_japanese(text: str) -> str:
                 "content": (
                     "你是一个日文翻译助手。把用户输入的中文翻译成日文，"
                     "保持牧濑红莉栖（Makise Kurisu）的语气：自信、略带傲娇、偶尔用科学术语。"
-                    "只输出日文译文，不要加任何解释或前缀。"
+                    "只输出日文译文，不要加任何解释或前缀。\n"
+                    "【专有名词映射，输出纯片假名，不要加注音括号】\n"
+                    "凤凰院凶真 → ホウオウインキョウマ\n"
+                    "牧濑红莉栖 → マキセクリス\n"
+                    "克里斯蒂娜 → クリスティーナ\n"
+                    "冈部伦太郎 → オカベリンタロウ\n"
+                    "桥田至 → ハシダイタル\n"
+                    "椎名真由理 → シイナマユリ\n"
+                    "漆原琉华 → ウルシバラルカ\n"
+                    "菲利斯 → フェイリス\n"
+                    "阿万音铃羽 → アマネスズハ\n"
+                    "天王寺裕吾 → テンノウジユウゴ\n"
+                    "命运石之门 → シュタインズ・ゲート\n"
+                    "电话微波炉 → デンワレンジ\n"
+                    "时间跳跃机 → タイムリープマシン\n"
+                    "时间机器 → タイムマシン\n"
+                    "未来道具研究所 → ミライガジェットケンキュウジョ\n"
+                    "Amadeus → アマデウス\n"
+                    "SERN → セルン\n"
+                    "【重要】所有英文单词、数字、专有名词都要翻译成日文片假名。"
+                    "只用平假名、片假名、汉字和日文标点（。、！？…ー〜）。"
                 ),
             },
             {"role": "user", "content": text},
@@ -186,7 +204,11 @@ async def _to_japanese(text: str) -> str:
         temperature=0.3,
         max_tokens=512,
     )
-    return resp.choices[0].message.content.strip()
+    result = resp.choices[0].message.content.strip()
+    # 只保留日文能发音的字符：平假名、片假名、汉字、数字、英文、常用标点
+    result = re.sub(r'[^぀-ゟ゠-ヿ一-鿿'
+                    r'a-zA-Z0-9。、！？…ー〜！.,]', '', result)
+    return result
 
 
 # ============================================
@@ -216,7 +238,7 @@ async def voice_websocket(websocket: WebSocket):
 
             # TTS 合成（instruct 控制语速）
             try:
-                audio_bytes = await synthesize(ja_text, instruct="少しゆっくり話してください")
+                audio_bytes = await synthesize(ja_text, language="ja")
                 await websocket.send_bytes(audio_bytes)
                 print(f"  ✅ 已发送 {len(audio_bytes)} bytes")
             except Exception as e:
@@ -276,7 +298,7 @@ async def voice_chat_websocket(websocket: WebSocket):
                 try:
                     ja_text = await _to_japanese(reply_text)
                     print(f"  日文: {ja_text[:40]}...")
-                    audio = await synthesize(ja_text, instruct="少しゆっくり話してください")
+                    audio = await synthesize(ja_text, language="ja")
                     b64 = base64.b64encode(audio).decode("ascii")
                     await websocket.send_text(json.dumps({"type": "audio", "data": b64}))
                     print(f"  ✅ 语音已发送")
