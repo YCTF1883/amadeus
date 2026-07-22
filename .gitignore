@@ -26,5 +26,17 @@ live2d/*.zip
 live2d/*.rar
 
 # 前端
+node_modules/
 frontend/node_modules/
 frontend/dist/
+
+# 数据库 / 记忆（含个人数据，严禁提交）
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+**/chroma_db/**
+*.bin
+
+# 一次性脚本
+create_phase2_doc.js
