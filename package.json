@@ -1,0 +1,23 @@
+{
+  "name": "amadeus",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YCTF1883/amadues.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/YCTF1883/amadues/issues"
+  },
+  "homepage": "https://github.com/YCTF1883/amadues#readme",
+  "description": "",
+  "dependencies": {
+    "docx": "^9.7.1"
+  }
+}
