@@ -389,7 +389,7 @@ npm test
 
 **El Psy Kongroo.**
 
-项目作者：陆泽熙
+项目作者：陆泽榕
 
 </div>
 
