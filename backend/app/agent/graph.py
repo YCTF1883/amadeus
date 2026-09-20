@@ -13,18 +13,71 @@ import json
 import asyncio
 from typing import Optional, AsyncIterator, Dict, Any
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, RemoveMessage
 from langgraph.prebuilt import create_react_agent
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pathlib import Path
 from backend.app.config import config
-from backend.app.agent.prompts import AMADEUS_SYSTEM_PROMPT
+from backend.app.agent.prompts import AMADEUS_SYSTEM_PROMPT, build_worldline_message
 from backend.app.agent.tools import AVAILABLE_TOOLS
 
 # 摘要触发阈值：消息超过此数量时自动总结
 MAX_MESSAGES_BEFORE_SUMMARY = 30
 KEEP_RECENT_MESSAGES = 10
+
+
+def find_unanswered_tool_calls(messages: list) -> list[dict]:
+    """找出因请求中断而没有对应 ToolMessage 的工具调用。"""
+    answered_ids = {
+        message.tool_call_id
+        for message in messages
+        if isinstance(message, ToolMessage) and message.tool_call_id
+    }
+    return [
+        tool_call
+        for message in messages
+        if isinstance(message, AIMessage)
+        for tool_call in (message.tool_calls or [])
+        if tool_call.get("id") and tool_call["id"] not in answered_ids
+    ]
+
+
+def sanitize_interrupted_tool_history(messages: list) -> tuple[list, int]:
+    """移除没有被紧邻 ToolMessage 完整回答的工具调用交换。"""
+    malformed_call_ids = set()
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, AIMessage) or not message.tool_calls:
+            continue
+
+        expected_ids = {call["id"] for call in message.tool_calls if call.get("id")}
+        answered_ids = set()
+        cursor = index + 1
+        while cursor < len(messages) and isinstance(messages[cursor], ToolMessage):
+            answered_ids.add(messages[cursor].tool_call_id)
+            cursor += 1
+
+        if not expected_ids.issubset(answered_ids):
+            malformed_call_ids.update(expected_ids)
+
+    if not malformed_call_ids:
+        return list(messages), 0
+
+    cleaned = [
+        message
+        for message in messages
+        if not (
+            isinstance(message, AIMessage)
+            and any(call.get("id") in malformed_call_ids for call in message.tool_calls)
+        )
+        and not (
+            isinstance(message, ToolMessage)
+            and message.tool_call_id in malformed_call_ids
+        )
+    ]
+    return cleaned, len(messages) - len(cleaned)
 
 
 class AmadeusAgent:
@@ -85,6 +138,17 @@ class AmadeusAgent:
             checkpointer=self.memory,
             prompt=SystemMessage(content=AMADEUS_SYSTEM_PROMPT),
         )
+
+    async def close(self):
+        """释放持久化记忆连接，允许服务干净退出。"""
+        memory = self.memory
+        self.memory = None
+        self.graph = None
+
+        if memory is not None:
+            connection = getattr(memory, "conn", None)
+            if connection is not None:
+                await connection.close()
 
     def _validate_config(self):
         """检查配置是否就绪"""
@@ -150,6 +214,19 @@ class AmadeusAgent:
         except Exception as e:
             print(f"  ⚠️ 摘要失败（不影��正常对话）: {e}")
 
+    async def _repair_interrupted_tool_calls(self, config_: dict) -> int:
+        """移除被取消或错位的工具交换，避免持久化会话永久失效。"""
+        state = await self.graph.aget_state(config_)
+        messages = list(state.values.get("messages", [])) if state and state.values else []
+        cleaned, removed = sanitize_interrupted_tool_history(messages)
+        if not removed:
+            return 0
+
+        replacement = [RemoveMessage(id=REMOVE_ALL_MESSAGES), *cleaned]
+        await self.graph.aupdate_state(config_, {"messages": replacement}, as_node="tools")
+        print(f"  Removed malformed tool history messages: {removed}")
+        return removed
+
     async def _auto_extract_profile(self, user_msg: str, assistant_reply: str):
         """后台分析对话，自动提取用户画像存入知识库"""
         try:
@@ -184,11 +261,28 @@ class AmadeusAgent:
             pass  # 静默失败，不能影响正常对话
 
     async def _get_thread_id(self) -> str:
-        """生成新的会话线程 ID"""
+        """生成新会话线程 ID"""
         import uuid
         return f"session_{uuid.uuid4().hex[:8]}"
 
-    async def chat(self, message: str, thread_id: Optional[str] = None) -> tuple[str, str]:
+    @staticmethod
+    def _inject_time_reminder(message: str) -> str:
+        """用户问时间时，提醒模型重新调用工具而非照抄历史"""
+        if any(kw in message for kw in ("几点", "时间", "日期", "几号", "星期", "今天")):
+            return (
+                "【系统提醒：用户询问时间。对话历史里的任何时间都是过去的记录，"
+                "禁止照抄。必须调用 get_current_time 获取当前真实时间后再回答。】\n\n"
+                + message
+            )
+        return message
+
+    async def chat(
+        self,
+        message: str,
+        thread_id: Optional[str] = None,
+        worldline_enabled: bool = False,
+        worldline_mode: str = "observe",
+    ) -> tuple[str, str]:
         """
         发送消息，获取完整回复
 
@@ -205,8 +299,13 @@ class AmadeusAgent:
         tid = thread_id or await self._get_thread_id()
         config_ = {"configurable": {"thread_id": tid}}
 
+        await self._repair_interrupted_tool_calls(config_)
+
         # 对话过长时自动摘要
         await self._maybe_summarize(config_)
+
+        message = self._inject_time_reminder(message)
+        message = build_worldline_message(message, worldline_enabled, worldline_mode)
 
         result = await self.graph.ainvoke(
             {"messages": [HumanMessage(content=message)]},
@@ -216,7 +315,14 @@ class AmadeusAgent:
         last_message = result["messages"][-1]
         return last_message.content, tid
 
-    async def chat_stream(self, message: str, thread_id: Optional[str] = None, voice_mode: bool = False) -> AsyncIterator[str]:
+    async def chat_stream(
+        self,
+        message: str,
+        thread_id: Optional[str] = None,
+        voice_mode: bool = False,
+        worldline_enabled: bool = False,
+        worldline_mode: str = "observe",
+    ) -> AsyncIterator[str]:
         """
         流式聊天 —— 一个字一个字地输出，像真人在打字
 
@@ -230,11 +336,17 @@ class AmadeusAgent:
         tid = thread_id or await self._get_thread_id()
         config_ = {"configurable": {"thread_id": tid}}
 
+        await self._repair_interrupted_tool_calls(config_)
+
         # 对话过长时自动摘要
         await self._maybe_summarize(config_)
 
+        # 实时性提醒：历史里的时间是过期缓存，必须重新查询
+        message = self._inject_time_reminder(message)
+        message = build_worldline_message(message, worldline_enabled, worldline_mode)
+
         # 语音模式：中文回复但简短（1-2句话），方便 TTS
-        if voice_mode:
+        if voice_mode and not worldline_enabled:
             voice_instruction = (
                 "【系统指令：这是语音对话，必须严格遵守以下规则】\n"
                 "1. 用中文回复，控制在1句话以内（30字以内）\n"
@@ -259,6 +371,35 @@ class AmadeusAgent:
                     full_reply += chunk.content
                     yield chunk.content
 
+            elif kind == "on_tool_start":
+                tool_name = event.get("name", "unknown")
+                tool_input = event.get("data", {}).get("input", {})
+                yield json.dumps({
+                    "type": "tool_start",
+                    "tool_name": tool_name,
+                    "tool_input": str(tool_input) if tool_input else "",
+                })
+
+            elif kind == "on_tool_end":
+                tool_name = event.get("name", "unknown")
+                tool_output = event.get("data", {}).get("output", "")
+                if hasattr(tool_output, "content"):
+                    tool_output = tool_output.content
+                yield json.dumps({
+                    "type": "tool_end",
+                    "tool_name": tool_name,
+                    "tool_output": str(tool_output)[:800] if tool_output else "",
+                })
+
+            elif kind == "on_tool_error":
+                tool_name = event.get("name", "unknown")
+                error_msg = str(event.get("data", {}).get("error", "未知错误"))
+                yield json.dumps({
+                    "type": "tool_error",
+                    "tool_name": tool_name,
+                    "error": error_msg[:500],
+                })
+
         # 后台自动提取用户画像
         if full_reply.strip():
             asyncio.create_task(self._auto_extract_profile(message, full_reply))
@@ -274,3 +415,12 @@ def get_agent() -> AmadeusAgent:
     if _agent_instance is None:
         _agent_instance = AmadeusAgent()
     return _agent_instance
+
+
+async def close_agent():
+    """关闭已经创建的 Agent；未启动时不创建新实例。"""
+    global _agent_instance
+    agent = _agent_instance
+    _agent_instance = None
+    if agent is not None:
+        await agent.close()

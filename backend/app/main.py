@@ -2,8 +2,8 @@
 Amadeus 后端入口 —— FastAPI 应用
 
 启动方式:
-    cd backend
-    python -m uvicorn app.main:app --reload --port 8000
+    cd D:/amadeus
+    python -m uvicorn backend.app.main:app --port 8000
 
 API 文档（启动后访问）:
     http://localhost:8000/docs  （Swagger UI）
@@ -15,14 +15,26 @@ import traceback
 import asyncio
 import re
 from openai import AsyncOpenAI
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from backend.app.models.schemas import ChatRequest, ChatResponse, HealthResponse
-from backend.app.agent.graph import get_agent
+from backend.app.models.schemas import (
+    ChatRequest,
+    ChatResponse,
+    HealthResponse,
+    KnowledgeFile,
+    KnowledgeUploadResponse,
+    RagRequest,
+    RagResponse,
+)
+from backend.app.agent.graph import close_agent, get_agent
+from backend.app.speech.stt import stop_worker
 from backend.app.speech.tts import synthesize
 from backend.app.config import config
+from backend.app.services.knowledge_base_service import get_knowledge_base_service
+from backend.app.services.rag_service import get_rag_service
+from backend.app.services.sse_service import encode_agent_stream_item
 # ============================================
 # 创建 FastAPI 应用
 # ============================================
@@ -70,6 +82,14 @@ async def startup():
         print("   请先启动 GPT-SoVITS API 服务")
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    """关闭数据库连接和语音子进程，避免退出后残留进程。"""
+    stop_worker()
+    await close_agent()
+    print("Amadeus 后端资源已释放")
+
+
 # ============================================
 # API 路由
 # ============================================
@@ -103,6 +123,8 @@ async def chat(request: ChatRequest):
         reply, thread_id = await agent.chat(
             message=request.message,
             thread_id=request.thread_id,
+            worldline_enabled=request.worldline_enabled,
+            worldline_mode=request.worldline_mode,
         )
         return ChatResponse(reply=reply, thread_id=thread_id)
 
@@ -129,9 +151,10 @@ async def chat_stream(request: ChatRequest):
             async for token in agent.chat_stream(
                 request.message,
                 thread_id=request.thread_id,
+                worldline_enabled=request.worldline_enabled,
+                worldline_mode=request.worldline_mode,
             ):
-                # SSE 格式：data: <内容>\n\n
-                yield f"data: {token}\n\n"
+                yield encode_agent_stream_item(token)
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -147,6 +170,46 @@ async def chat_stream(request: ChatRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)
+async def upload_knowledge_file(file: UploadFile = File(...)):
+    """上传文档并写入 Chroma 知识库。"""
+    try:
+        record = await get_knowledge_base_service().upload_file(file)
+        message = "文件已存在，已跳过去重。" if record.get("duplicate") else "文件已上传并写入知识库。"
+        return KnowledgeUploadResponse(message=message, file=KnowledgeFile(**record))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"知识库上传失败: {str(e)}")
+
+
+@app.get("/api/knowledge/files", response_model=list[KnowledgeFile])
+async def list_knowledge_files():
+    """获取已上传的知识库文件列表。"""
+    return [KnowledgeFile(**item) for item in get_knowledge_base_service().list_files()]
+
+
+@app.delete("/api/knowledge/files/{file_id}")
+async def delete_knowledge_file(file_id: str):
+    """删除知识库文件及其向量片段。"""
+    ok = get_knowledge_base_service().delete_file(file_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return {"message": "文件已从知识库删除。"}
+
+
+@app.post("/api/rag/chat", response_model=RagResponse)
+async def rag_chat(request: RagRequest):
+    """标准 RAG 问答接口：检索知识库并基于上下文回答。"""
+    try:
+        result = await get_rag_service().ask(request.question, k=request.k)
+        return RagResponse(**result)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"RAG 调用失败: {str(e)}")
 
 
 # ============================================
@@ -325,7 +388,7 @@ if __name__ == "__main__":
         "backend.app.main:app",
         host="0.0.0.0",
         port=config.SERVER_PORT,
-        reload=config.DEBUG,
+        reload=False,
     )
 
 

@@ -1,4 +1,5 @@
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { countRunningTools } from '../domain/characterState.js'
 
 export function useChat() {
   // ============================================
@@ -6,6 +7,10 @@ export function useChat() {
   // ============================================
   const messages = ref([])
   const isLoading = ref(false)
+  const chatError = ref('')
+  const runningToolCount = computed(() => countRunningTools(messages.value))
+  const worldlineEnabled = ref(localStorage.getItem('amadeus_worldline_enabled') === 'true')
+  const worldlineMode = ref(localStorage.getItem('amadeus_worldline_mode') || 'observe')
 
   // 从 localStorage 读取上次的 thread_id，没有就生成新的
   const threadId = ref(
@@ -14,12 +19,52 @@ export function useChat() {
   )
 
   // ============================================
+  // 工具调用处理（内部）
+  // ============================================
+  function handleToolStart(event) {
+    const lastMsg = messages.value[messages.value.length - 1]
+    if (!lastMsg || lastMsg.role !== 'assistant') return
+    // 替换整个对象触发 Vue 响应式
+    const idx = messages.value.length - 1
+    const updated = { ...messages.value[idx] }
+    if (!updated.toolCalls) updated.toolCalls = []
+    updated.toolCalls.push({
+      callId: event.tool_name + '_' + Date.now(),
+      name: event.tool_name,
+      status: 'running',
+      input: event.tool_input,
+      output: null,
+      error: null,
+    })
+    messages.value[idx] = updated
+  }
+
+  function handleToolEnd(event) {
+    const lastMsg = messages.value[messages.value.length - 1]
+    if (!lastMsg || lastMsg.role !== 'assistant' || !lastMsg.toolCalls) return
+    const idx = messages.value.length - 1
+    const updated = { ...messages.value[idx] }
+    const tc = updated.toolCalls.find(t => t.name === event.tool_name && t.status === 'running')
+    if (tc) {
+      if (event.type === 'tool_error') {
+        tc.status = 'error'
+        tc.error = event.error
+      } else {
+        tc.status = 'done'
+        tc.output = event.tool_output
+      }
+    }
+    messages.value[idx] = updated
+  }
+
+  // ============================================
   // 发送消息（SSE 流式）
   // ============================================
   async function sendMessage(text) {
     if (!text.trim()) return
     if (isLoading.value) return
 
+    chatError.value = ''
     // 1. 用户消息加入列表
     messages.value.push({
       id: Date.now(),
@@ -33,6 +78,7 @@ export function useChat() {
       id: Date.now() + 1,
       role: 'assistant',
       content: '',
+      toolCalls: [],
       timestamp: new Date()
     })
 
@@ -45,7 +91,9 @@ export function useChat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: text,
-          thread_id: threadId.value
+          thread_id: threadId.value,
+          worldline_enabled: worldlineEnabled.value,
+          worldline_mode: worldlineMode.value,
         })
       })
 
@@ -78,12 +126,28 @@ export function useChat() {
             return
           }
 
-          // 第一个 token 是 JSON 元信息（thread_id）
+          // JSON 事件：元信息 or 工具调用
           if (data.startsWith('{')) {
             try {
-              const meta = JSON.parse(data)
-              if (meta.type === 'meta' && meta.thread_id) {
-                threadId.value = meta.thread_id
+              const event = JSON.parse(data)
+              if (event.type === 'meta' && event.thread_id) {
+                threadId.value = event.thread_id
+                continue
+              }
+              if (event.type === 'text') {
+                const lastMsg = messages.value[messages.value.length - 1]
+                if (lastMsg && lastMsg.role === 'assistant') {
+                  lastMsg.content += event.content || ''
+                }
+                continue
+              }
+              if (event.type === 'tool_start') {
+                handleToolStart(event)
+                continue
+              }
+              if (event.type === 'tool_end' || event.type === 'tool_error') {
+                handleToolEnd(event)
+                continue
               }
             } catch {}
             continue
@@ -98,6 +162,7 @@ export function useChat() {
       }
     } catch (err) {
       console.error('发送失败:', err)
+      chatError.value = `发送失败：${err.message}`
     } finally {
       isLoading.value = false
     }
@@ -108,6 +173,7 @@ export function useChat() {
   // ============================================
   function clearHistory() {
     messages.value = []
+    chatError.value = ''
     threadId.value = 'session_' + crypto.randomUUID().slice(0, 8)
   }
 
@@ -117,6 +183,22 @@ export function useChat() {
   watch(threadId, (newId) => {
     localStorage.setItem('amadeus_thread_id', newId)
   })
+  watch(worldlineEnabled, (enabled) => {
+    localStorage.setItem('amadeus_worldline_enabled', String(enabled))
+  })
+  watch(worldlineMode, (mode) => {
+    localStorage.setItem('amadeus_worldline_mode', mode)
+  })
 
-  return { messages, isLoading, threadId, sendMessage, clearHistory }
+  return {
+    messages,
+    isLoading,
+    runningToolCount,
+    chatError,
+    threadId,
+    worldlineEnabled,
+    worldlineMode,
+    sendMessage,
+    clearHistory,
+  }
 }

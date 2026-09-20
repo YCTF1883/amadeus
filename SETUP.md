@@ -83,9 +83,13 @@ npm install
 **终端 1 — 后端：**
 
 ```bash
-cd backend
-python -m uvicorn app.main:app --reload --port 8000
+cd D:/amadeus
+python -m uvicorn backend.app.main:app --port 8000
 ```
+
+日常运行不要加 `--reload`。热重载会额外创建一个父进程和一个工作子进程，
+在部分 Windows IDE 终端中按 `Ctrl+C` 只会中断其中一个进程。只有修改后端代码、
+确实需要自动重载时，才临时使用 `--reload`。
 
 **终端 2 — 前端：**
 
@@ -95,6 +99,17 @@ npm run dev
 ```
 
 浏览器打开 `http://localhost:5173`，文字对话即可使用。
+
+### 4.1 完全停止项目（Windows）
+
+双击项目根目录的 `stop_amadeus.bat`，会结束占用以下项目端口的整棵进程树：
+
+- `5173`：前端 Vite
+- `8000`：Amadeus 后端
+- `9880`：GPT-SoVITS API
+
+终端中按 `Ctrl+C` 后出现一段以 `KeyboardInterrupt` 结尾的调用栈，表示 Python
+收到了中断信号，本身不是程序故障。如果端口仍未释放，再运行停止脚本即可。
 
 ---
 

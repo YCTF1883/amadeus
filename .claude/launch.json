@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "amadeus-backend",
+      "runtimeExecutable": "D:\\conda_envs\\amadeus\\python.exe",
+      "runtimeArgs": [
+        "-X",
+        "utf8",
+        "-m",
+        "uvicorn",
+        "backend.app.main:app",
+        "--port",
+        "8000"
+      ],
+      "cwd": "D:\\amadeus",
+      "port": 8000
+    },
+    {
+      "name": "amadeus-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "D:\\amadeus\\frontend",
+      "port": 5173
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 Pydantic 数据模型 — 定义 API 请求/响应的格式
 """
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Any, Literal
 from datetime import datetime
 
 
@@ -21,6 +21,12 @@ class ChatRequest(BaseModel):
     history: Optional[list[ChatMessage]] = Field(
         default=[], description="之前的对话历史（可选）"
     )
+    worldline_enabled: bool = Field(
+        default=False, description="是否启用世界线推演"
+    )
+    worldline_mode: Literal["observe", "immersive"] = Field(
+        default="observe", description="世界线模式：观测或沉浸"
+    )
 
 
 class ChatResponse(BaseModel):
@@ -35,3 +41,45 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"
     character: str = "Amadeus — 牧濑红莉栖"
+
+
+class KnowledgeFile(BaseModel):
+    """知识库文件元数据"""
+    file_id: str
+    filename: str
+    md5: str
+    size: int
+    chunk_count: int = 0
+    upload_time: str
+    status: str
+    error: str = ""
+    duplicate: bool = False
+
+
+class KnowledgeUploadResponse(BaseModel):
+    """知识库上传结果"""
+    message: str
+    file: KnowledgeFile
+
+
+class RagRequest(BaseModel):
+    """标准 RAG 问答请求"""
+    question: str = Field(..., description="用户问题", min_length=1)
+    k: int = Field(default=4, description="检索片段数量", ge=1, le=10)
+    conversation_id: Optional[str] = Field(default=None, description="预留会话ID")
+
+
+class RagSource(BaseModel):
+    """RAG 引用来源"""
+    file_id: str = ""
+    filename: str = "未知来源"
+    source: str = "未知来源"
+    score: Optional[float] = None
+    snippet: str = ""
+
+
+class RagResponse(BaseModel):
+    """标准 RAG 问答响应"""
+    answer: str
+    sources: list[RagSource] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.now)

@@ -1,9 +1,7 @@
-import { ref } from 'vue'
+import { useAudioPlayback } from './useAudioPlayback.js'
 
-export function useVoice() {
-  const isSpeaking = ref(false)
+export function useVoice(playback = useAudioPlayback()) {
   let ws = null
-  let audioCtx = null
 
   function connect() {
     if (ws && ws.readyState === WebSocket.OPEN) return ws
@@ -13,6 +11,7 @@ export function useVoice() {
     const url = `${protocol}//${location.host}/ws/voice`
 
     ws = new WebSocket(url)
+    ws.binaryType = 'arraybuffer'
 
     ws.onopen = () => console.log('🔊 语音通道已连接')
     ws.onclose = () => console.log('🔊 语音通道已断开')
@@ -22,9 +21,7 @@ export function useVoice() {
   }
 
   async function speak(text) {
-    if (!text.trim() || isSpeaking.value) return
-
-    isSpeaking.value = true
+    if (!text.trim() || playback.isSpeaking.value) return
     const socket = connect()
 
     // 等 WebSocket 连上再发
@@ -34,24 +31,12 @@ export function useVoice() {
       })
     }
 
-    // 准备接收音频
-    socket.onmessage = async (event) => {
-      const blob = new Blob([event.data], { type: 'audio/wav' })
-      const url = URL.createObjectURL(blob)
-
-      const audio = new Audio(url)
-      audio.onended = () => {
-        URL.revokeObjectURL(url)
-        isSpeaking.value = false
-      }
-      audio.onerror = () => {
-        isSpeaking.value = false
-      }
-      await audio.play()
+    socket.onmessage = event => {
+      playback.playBlob(new Blob([event.data], { type: 'audio/wav' })).catch(() => {})
     }
 
     socket.send(text)
   }
 
-  return { isSpeaking, speak }
+  return { speak }
 }

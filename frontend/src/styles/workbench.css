@@ -1,0 +1,87 @@
+.amadeus-app {
+  position: relative;
+  min-width: 320px;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: var(--bg-0);
+}
+
+.workbench-header { height: 64px; }
+
+.workbench-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(240px, 290px);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "knowledge character inspector"
+    "knowledge conversation inspector";
+  gap: 12px;
+  min-height: 0;
+  height: calc(100dvh - 64px);
+  padding: 12px;
+}
+
+.workbench-knowledge { grid-area: knowledge; box-shadow: var(--shadow-panel); }
+.workbench-character { grid-area: character; }
+.workbench-inspector { grid-area: inspector; box-shadow: var(--shadow-panel); }
+.workbench-conversation { grid-area: conversation; box-shadow: var(--shadow-panel); }
+
+.crt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0.5;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.035) 0, rgba(0, 0, 0, 0.035) 1px, transparent 1px, transparent 4px);
+}
+
+@media (max-width: 1180px) {
+  .workbench-grid {
+    grid-template-columns: minmax(230px, 270px) minmax(0, 1fr) minmax(205px, 230px);
+    gap: 8px;
+    padding: 8px;
+  }
+}
+
+@media (max-width: 900px) {
+  .amadeus-app { overflow: visible; }
+  .workbench-header { height: 56px; }
+  .workbench-header button,
+  .workbench-grid button { min-height: 40px; }
+  .workbench-header button { min-width: 40px; }
+  .workbench-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas:
+      "character"
+      "conversation"
+      "knowledge"
+      "inspector";
+    height: auto;
+    min-height: calc(100dvh - 56px);
+    overflow: visible;
+    padding: 8px;
+  }
+  .workbench-character { min-height: 340px; }
+  .workbench-conversation { height: clamp(300px, 48vh, 440px); }
+  .workbench-knowledge { min-height: 560px; }
+  .workbench-inspector { min-height: 260px; border-left: 0; }
+}
+
+@media (max-width: 520px) {
+  .workbench-grid { padding: 0; gap: 1px; }
+  .workbench-character { min-height: 310px; }
+  .workbench-knowledge { min-height: 590px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

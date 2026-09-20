@@ -1,0 +1,19 @@
+:root {
+  color-scheme: dark;
+  --bg-0: #050707;
+  --bg-1: #0a0f0e;
+  --surface-1: rgba(10, 18, 16, 0.9);
+  --surface-2: rgba(13, 24, 21, 0.82);
+  --line: rgba(112, 255, 174, 0.18);
+  --line-strong: rgba(112, 255, 174, 0.42);
+  --text-1: #e7f4ee;
+  --text-2: #9eb4aa;
+  --green: #54e889;
+  --cyan: #56cfe1;
+  --amber: #f4bf5f;
+  --rose: #e85d75;
+  --brand: #d84c68;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --shadow-panel: 0 18px 50px rgba(0, 0, 0, 0.28);
+}

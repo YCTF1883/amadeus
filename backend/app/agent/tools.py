@@ -6,13 +6,17 @@ LangChain 的 @tool 装饰器会把函数自动转换成 LLM 可以理解的工�
 """
 import datetime
 import math
+import urllib.error
+import urllib.request
 from langchain_core.tools import tool
 import smtplib
 from ..config import config
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from backend.app.rag.knowledge_base import KnowledgeBase
+from backend.app.services.vector_store_service import get_vector_store_service, format_search_results
 from ddgs import DDGS
+from html.parser import HTMLParser
 
 _kb_instance = None
 
@@ -112,11 +116,11 @@ def search_knowledge_base(query: str) -> str:
     参数:
         query: 搜索查询，用自然语言描述你想找什么
     """
-    kb = _get_kb()
-    results = kb.search(query)
-    if not results or results == "知识库中没有找到相关文档。":
+    results = get_vector_store_service().search_documents(query, k=4)
+    formatted = format_search_results(results)
+    if not results or formatted == "知识库中没有找到相关文档。":
         return "知识库中没有找到相关信息。哼，你是不是还没往里面放资料？"
-    return f"从知识库中找到以下信息：\n{results}"
+    return f"从知识库中找到以下信息：\n{formatted}"
 
 
 @tool
@@ -169,6 +173,49 @@ def search_web(query: str) -> str:
     except Exception as e:
         return f"搜索失败：{str(e)}。哼，大概是网络问题，别赖我。"
 
+@tool
+def fetch_text_from_url(url: str) ->str:
+    """从指定URL获取文本内容。当用户需要从网页中提取文本时调用。
+
+    参数:
+        url: 要获取文本的网页URL
+    """
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; quickstart-research/1.0)"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+    except urllib.error.URLError as e:
+        return f"Fetch failed: {e}"
+    text = raw.decode("utf-8", errors="replace")
+    class TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.text = []
+                self.skip_tags = {'script', 'style', 'noscript', 'code', 'iframe', 'svg'}
+
+            def handle_starttag(self, tag, attrs):
+                if tag in self.skip_tags:
+                    self.skip = True
+
+            def handle_endtag(self, tag):
+                if tag in self.skip_tags:
+                    self.skip = False
+                if tag in ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'br', 'tr', 'div', 'section', 'article'):
+                    self.text.append('\n')
+
+            def handle_data(self, data):
+                if not self.skip:
+                    s = data.strip()
+                    if s:
+                        self.text.append(s)
+    extractor = TextExtractor()
+    extractor.feed(text)
+    clean_text = '\n'.join(extractor.text)
+    return clean_text
+
 # Phase 1 可用的工具列表（后续会扩展邮件等更多工具）
 AVAILABLE_TOOLS = [
     get_current_time,
@@ -179,4 +226,5 @@ AVAILABLE_TOOLS = [
     add_to_knowledge_base,
     delete_from_knowledge_base,
     search_web,
+    fetch_text_from_url,
 ]
